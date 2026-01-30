@@ -1,0 +1,93 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: flower-shop-db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-flower_shop}
+      MYSQL_USER: ${MYSQL_USER:-flower_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-flower_password}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - flower-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: flower-shop-server
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${MYSQL_USER:-flower_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-flower_password}
+      DB_NAME: ${MYSQL_DATABASE:-flower_shop}
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET:-flower-shop-jwt-secret-change-me}
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - flower-network
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: flower-shop-client
+    volumes:
+      - client_build:/output
+    networks:
+      - flower-network
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: flower-shop-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - client_build:/usr/share/nginx/html:ro
+      - uploads_data:/usr/share/nginx/uploads:ro
+    networks:
+      - flower-network
+    depends_on:
+      server:
+        condition: service_healthy
+      client:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  flower-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  client_build:
+  uploads_data:
